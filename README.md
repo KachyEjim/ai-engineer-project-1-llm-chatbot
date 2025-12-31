@@ -19,11 +19,16 @@ Currently using: OpenAI
    ```bash
    pip install -r requirements.txt
    ```
-3. Copy the example environment file and add your API key:
+3. Copy the example environment file:
    ```bash
    cp .env.example .env
-   # Edit .env to add your API key
    ```
+4. Set your OpenAI API key in `.env`:
+   ```env
+   OPENAI_API_KEY=your_openai_api_key_here
+   ```
+
+**Do not commit your `.env` file to version control.**
 
 ## Running Day 1
 
