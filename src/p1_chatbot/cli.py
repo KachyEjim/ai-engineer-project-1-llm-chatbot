@@ -7,8 +7,13 @@ It maintains conversation history and allows continuous interaction until the us
 
 import os
 from dotenv import load_dotenv
+from .tokens import count_tokens
 
 load_dotenv()
+
+EXERCISE_MAX_CONTEXT_TOKENS = 4096
+RESERVED_OUTPUT_TOKENS = 500
+TRUNCATE_THRESHOLD_TOKENS = 3500
 
 
 def get_llm_client():
@@ -24,7 +29,7 @@ def get_llm_client():
             from google import genai
             from google.genai import types
             client = genai.Client(api_key=gemini_key)
-            model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+            model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
             return "gemini", client, model
         except ImportError:
             print("Warning: google-genai not installed. Install with: pip install google-genai")
@@ -51,6 +56,7 @@ def call_openai(client, model: str, messages: list[dict[str, str]]) -> str:
     completion = client.chat.completions.create(
         model=model,
         messages=messages,
+        max_tokens=RESERVED_OUTPUT_TOKENS,
     )
     return completion.choices[0].message.content or ""
 
@@ -67,6 +73,9 @@ def call_gemini(client, model: str, messages: list[dict[str, str]]) -> str:
     response = client.models.generate_content(
         model=model,
         contents=gemini_messages,
+        config=types.GenerateContentConfig(
+            max_output_tokens=RESERVED_OUTPUT_TOKENS,
+        ),
     )
     return response.text
 
@@ -75,6 +84,44 @@ def format_message(role: str, content: str) -> str:
     """Format the message for terminal output."""
     color = "\033[94m" if role == 'user' else "\033[92m"
     return f'{color}{role.capitalize()}: {content}\033[0m'
+
+
+def truncate_messages(messages: list[dict[str, str]], model: str) -> list[dict[str, str]]:
+    """
+    Truncate messages to fit within the context window budget.
+    
+    Removes oldest user+assistant pairs until we're under the threshold.
+    
+    Args:
+        messages: Current message history
+        model: Model name for token counting
+    
+    Returns:
+        Truncated message list
+    """
+    while messages:
+        input_tokens = count_tokens(messages, model)
+        
+        if input_tokens + RESERVED_OUTPUT_TOKENS <= EXERCISE_MAX_CONTEXT_TOKENS:
+            break
+        
+        if input_tokens <= TRUNCATE_THRESHOLD_TOKENS:
+            break
+
+        if len(messages) >= 2:
+
+            if messages[0].get("role") == "user" and messages[1].get("role") == "assistant":
+                messages.pop(0) 
+                messages.pop(0)  
+                print("[context] Truncated oldest messages to fit token budget.")
+            else:
+                messages.pop(0)
+                print("[context] Truncated oldest messages to fit token budget.")
+        else:
+            messages.pop(0)
+            print("[context] Truncated oldest messages to fit token budget.")
+    
+    return messages
 
 
 def main():
@@ -115,6 +162,11 @@ def main():
             return
 
         try:
+            messages = truncate_messages(messages, model)
+            
+            input_tokens_estimate = count_tokens(messages, model)
+            print(f"Tokens (estimated input): {input_tokens_estimate}")
+            
             if provider == "openai":
                 assistant_text = call_openai(client, model, messages)
             else:  
