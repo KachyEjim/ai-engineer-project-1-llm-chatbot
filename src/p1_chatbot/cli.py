@@ -133,6 +133,8 @@ def main():
     messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
     print("System prompt loaded. Type /quit to exit.")
 
+    cot_mode = False
+
     while True:
         user_input = input("You: ").strip()
         if user_input.lower() in ["quit", "exit", "/quit"]:
@@ -140,6 +142,15 @@ def main():
             break
         if not user_input:
             continue
+        if user_input.lower() == "/cot":
+            cot_mode = True
+            print("[mode] CoT enabled for next turn.")
+            continue  # Do not store /cot in messages
+        # If CoT mode is enabled, modify the next user message
+        if cot_mode:
+            user_input = "Explain your reasoning step-by-step, then give the final answer.\n\n" + user_input
+            cot_mode = False
+            print("[mode] CoT disabled.")
         messages.append({"role": "user", "content": user_input})
         if client is None:
             print("LLM client is not initialized. Please check your configuration.")
