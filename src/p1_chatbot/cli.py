@@ -6,9 +6,9 @@ It maintains conversation history and allows continuous interaction until the us
 """
 
 import os
+import warnings
 from dotenv import load_dotenv
 from .tokens import count_tokens
-from .prompts import SYSTEM_PROMPT
 
 load_dotenv()
 
@@ -52,35 +52,53 @@ def get_llm_client():
     )
 
 
-def call_openai(client, model: str, messages: list[dict[str, str]]) -> str:
-    """Call OpenAI API and return the assistant's response."""
+def call_openai(client, model: str, messages: list[dict[str, str]]) -> tuple[str, int, int]:
+    """Call OpenAI API and return the assistant's response, prompt tokens, and completion tokens."""
     completion = client.chat.completions.create(
         model=model,
         messages=messages,
         max_tokens=RESERVED_OUTPUT_TOKENS,
-        temperature=0.1,
     )
-    return completion.choices[0].message.content or ""
+    assistant_text = completion.choices[0].message.content or ""
+    if hasattr(completion, "usage") and completion.usage is not None:
+            prompt_tokens = completion.usage.prompt_tokens
+            completion_tokens = completion.usage.completion_tokens
+    else:
+            from .tokens import count_tokens
+            prompt_tokens = count_tokens(messages, model)
+            completion_tokens = count_tokens([
+                {"role": "assistant", "content": assistant_text}
+            ], model)
+    return assistant_text, prompt_tokens, completion_tokens
 
 
-def call_gemini(client, model: str, messages: list[dict[str, str]]) -> str:
-    """Call Gemini API and return the assistant's response."""
-    from google.genai import types
-    
-    gemini_messages = []
+def call_gemini(client, model: str, messages: list[dict[str, str]]) -> tuple[str, int, int]:
+    """Call Gemini API and return the assistant's response, prompt tokens, and completion tokens."""
+
+    conversation_history = []
     for msg in messages:
-        role = "user" if msg["role"] == "user" else "model"
-        gemini_messages.append(types.Content(role=role, parts=[types.Part(text=msg["content"])]))
-    
-    response = client.models.generate_content(
+        conversation_history.append({
+            "role": msg["role"],
+            "content": msg["content"]
+        })
+    interaction = client.interactions.create(
         model=model,
-        contents=gemini_messages,
-        config=types.GenerateContentConfig(
-            max_output_tokens=RESERVED_OUTPUT_TOKENS,
-            temperature=0.1,
-        ),
+        input=conversation_history,
+        generation_config={
+            "max_output_tokens": RESERVED_OUTPUT_TOKENS
+        }
     )
-    return response.text
+    outputs = getattr(interaction, "outputs", [])
+    assistant_text = ""
+    for output in outputs:
+        if hasattr(output, "text"):
+            assistant_text = output.text
+    from .tokens import count_tokens
+    prompt_tokens = count_tokens(messages, model)
+    completion_tokens = count_tokens([
+        {"role": "assistant", "content": assistant_text}
+    ], model)
+    return assistant_text, prompt_tokens, completion_tokens
 
 
 def format_message(role: str, content: str) -> str:
@@ -91,23 +109,39 @@ def format_message(role: str, content: str) -> str:
 
 def truncate_messages(messages: list[dict[str, str]], model: str) -> list[dict[str, str]]:
     """
-    Truncate messages to fit within the context window budget, but always keep the system prompt as the first message.
-    Removes oldest user+assistant pairs from index 1 onward until under the threshold.
+    Truncate messages to fit within the context window budget.
+    
+    Removes oldest user+assistant pairs until we're under the threshold.
+    
+    Args:
+        messages: Current message history
+        model: Model name for token counting
+    
+    Returns:
+        Truncated message list
     """
-    while len(messages) > 1:
+    while messages:
         input_tokens = count_tokens(messages, model)
+        
         if input_tokens + RESERVED_OUTPUT_TOKENS <= EXERCISE_MAX_CONTEXT_TOKENS:
             break
+        
         if input_tokens <= TRUNCATE_THRESHOLD_TOKENS:
             break
-        # Only truncate from index 1 onward
-        if len(messages) >= 3 and messages[1].get("role") == "user" and messages[2].get("role") == "assistant":
-            messages.pop(1)
-            messages.pop(1)
-            print("[context] Truncated oldest messages to fit token budget.")
+
+        if len(messages) >= 2:
+
+            if messages[0].get("role") == "user" and messages[1].get("role") == "assistant":
+                messages.pop(0) 
+                messages.pop(0)  
+                print("[context] Truncated oldest messages to fit token budget.")
+            else:
+                messages.pop(0)
+                print("[context] Truncated oldest messages to fit token budget.")
         else:
-            messages.pop(1)
+            messages.pop(0)
             print("[context] Truncated oldest messages to fit token budget.")
+    
     return messages
 
 
@@ -122,49 +156,60 @@ def main():
     - Maintains conversation history
     - Calls LLM API with full message history
     """
-    try:
-        provider, client, model = get_llm_client()
-        print(f"Using {provider.upper()} ({model})")
-        print("Type 'quit', 'exit', or '/quit' to end the conversation.\n")
-    except Exception as e:
-        print(f"Error initializing LLM client: {e}")
-        return
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Interactions usage is experimental and may change in future versions.")
+        try:
+            provider, client, model = get_llm_client()
+            print(f"Using {provider.upper()} ({model})")
+            print("Type 'quit', 'exit', or '/quit' to end the conversation.\n")
+        except Exception as e:
+            print(f"Error initializing LLM client: {e}")
+            return
     
-    messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
-    print("System prompt loaded. Type /quit to exit.")
-
-    cot_mode = False
+    messages: list[dict[str, str]] = []
+    total_cost = 0.0
+    from .cost import estimate_cost
 
     while True:
         user_input = input("You: ").strip()
+
         if user_input.lower() in ["quit", "exit", "/quit"]:
             print("Goodbye!")
             break
+
         if not user_input:
             continue
-        if user_input.lower() == "/cot":
-            cot_mode = True
-            print("[mode] CoT enabled for next turn.")
-            continue  # Do not store /cot in messages
-        # If CoT mode is enabled, modify the next user message
-        if cot_mode:
-            user_input = "Explain your reasoning step-by-step, then give the final answer.\n\n" + user_input
-            cot_mode = False
-            print("[mode] CoT disabled.")
+
         messages.append({"role": "user", "content": user_input})
+
         if client is None:
             print("LLM client is not initialized. Please check your configuration.")
             return
+
         try:
             messages = truncate_messages(messages, model)
+
             input_tokens_estimate = count_tokens(messages, model)
             print(f"Tokens (estimated input): {input_tokens_estimate}")
+
             if provider == "openai":
-                assistant_text = call_openai(client, model, messages)
+                assistant_text, prompt_tokens, completion_tokens = call_openai(client, model, messages)
             else:
-                assistant_text = call_gemini(client, model, messages)
+                assistant_text, prompt_tokens, completion_tokens = call_gemini(client, model, messages)
+
             print(format_message('assistant', assistant_text))
-            messages.append({"role": "assistant", "content": assistant_text})
+
+            turn_cost = estimate_cost(model, prompt_tokens, completion_tokens)
+            total_cost += turn_cost
+            print(f"[usage] prompt_tokens={prompt_tokens} completion_tokens={completion_tokens}")
+            print(f"[cost]  turn_usd={turn_cost:.6f} total_usd={total_cost:.6f}")
+
+
+            if provider == "gemini":
+                messages.append({"role": "model", "content": assistant_text})
+            else:
+                messages.append({"role": "assistant", "content": assistant_text})
+
         except Exception as e:
             print(f"Error calling LLM API: {e}")
             messages.pop()

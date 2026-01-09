@@ -58,3 +58,17 @@ This will start an interactive chat session with conversation history. Type `qui
 
 - **Missing API key:** Ensure you have copied `.env.example` to `.env` and added your API key.
 - **venv not activated:** Run `source .venv/bin/activate` before installing dependencies or running scripts.
+
+## Pricing source
+
+- Model: gpt-4o-mini
+- Price per 1,000 input tokens: $0.0005
+- Price per 1,000 output tokens: $0.0015
+- Date recorded: 2026-01-09
+- Source: https://openai.com/pricing
+
+- Model: gemini-2.5-flash-lite
+- Price per 1,000 input tokens: $0.00025
+- Price per 1,000 output tokens: $0.0005
+- Date recorded: 2026-01-09
+- Source: https://cloud.google.com/vertex-ai/generative-ai/pricing
