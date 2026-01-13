@@ -1,3 +1,5 @@
+# Import system prompt
+from .prompts import DEFAULT_SYSTEM_PROMPT
 """
 CLI entrypoint for the P1 Chatbot.
 
@@ -7,98 +9,24 @@ It maintains conversation history and allows continuous interaction until the us
 
 import os
 import warnings
-from dotenv import load_dotenv
 from .tokens import count_tokens
-
-load_dotenv()
-
-EXERCISE_MAX_CONTEXT_TOKENS = 4096
-RESERVED_OUTPUT_TOKENS = 500
-TRUNCATE_THRESHOLD_TOKENS = 3500
-
-
-def get_llm_client():
-    """
-    Detect available API keys and return the appropriate client.
-    Priority: Gemini (default for our testing), fallback to OpenAI if only OpenAI key exists.
-    """
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    openai_key = os.getenv("OPENAI_API_KEY")
-    
-    if gemini_key:
-        try:
-            from google import genai
-            from google.genai import types
-            client = genai.Client(api_key=gemini_key)
-            model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
-            return "gemini", client, model
-        except ImportError:
-            print("Warning: google-genai not installed. Install with: pip install google-genai")
-            if not openai_key:
-                raise
-    
-    if openai_key:
-        try:
-            from openai import OpenAI
-            client = OpenAI(api_key=openai_key)
-            model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-            return "openai", client, model
-        except ImportError:
-            print("Warning: openai not installed. Install with: pip install openai")
-            raise
-    
-    raise ValueError(
-        "No API key found. Please set GEMINI_API_KEY or OPENAI_API_KEY in your .env file."
-    )
+from .config import (
+    EXERCISE_MAX_CONTEXT_TOKENS,
+    RESERVED_OUTPUT_TOKENS,
+    TRUNCATE_THRESHOLD_TOKENS,
+    GEMINI_MODEL,
+    OPENAI_MODEL,
+    GEMINI_API_KEY,
+    OPENAI_API_KEY,
+    P1_MODEL,
+    P1_TEMPERATURE,
+    P1_MAX_TOKENS
+)
 
 
-def call_openai(client, model: str, messages: list[dict[str, str]]) -> tuple[str, int, int]:
-    """Call OpenAI API and return the assistant's response, prompt tokens, and completion tokens."""
-    completion = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        max_tokens=RESERVED_OUTPUT_TOKENS,
-    )
-    assistant_text = completion.choices[0].message.content or ""
-    if hasattr(completion, "usage") and completion.usage is not None:
-            prompt_tokens = completion.usage.prompt_tokens
-            completion_tokens = completion.usage.completion_tokens
-    else:
-            from .tokens import count_tokens
-            prompt_tokens = count_tokens(messages, model)
-            completion_tokens = count_tokens([
-                {"role": "assistant", "content": assistant_text}
-            ], model)
-    return assistant_text, prompt_tokens, completion_tokens
 
-
-def call_gemini(client, model: str, messages: list[dict[str, str]]) -> tuple[str, int, int]:
-    """Call Gemini API and return the assistant's response, prompt tokens, and completion tokens."""
-
-    conversation_history = []
-    for msg in messages:
-        conversation_history.append({
-            "role": msg["role"],
-            "content": msg["content"]
-        })
-    interaction = client.interactions.create(
-        model=model,
-        input=conversation_history,
-        generation_config={
-            "max_output_tokens": RESERVED_OUTPUT_TOKENS
-        }
-    )
-    outputs = getattr(interaction, "outputs", [])
-    assistant_text = ""
-    for output in outputs:
-        if hasattr(output, "text"):
-            assistant_text = output.text
-    from .tokens import count_tokens
-    prompt_tokens = count_tokens(messages, model)
-    completion_tokens = count_tokens([
-        {"role": "assistant", "content": assistant_text}
-    ], model)
-    return assistant_text, prompt_tokens, completion_tokens
+# Import LLM client logic from llm_client.py
+from .llm_client import get_llm_client, call_openai, call_gemini, create_chat_completion
 
 
 def format_message(role: str, content: str) -> str:
@@ -165,8 +93,12 @@ def main():
         except Exception as e:
             print(f"Error initializing LLM client: {e}")
             return
-    
-    messages: list[dict[str, str]] = []
+
+    # Set up message history with system prompt in correct role
+    if provider == "gemini":
+        messages = [{"role": "user", "content": DEFAULT_SYSTEM_PROMPT}]
+    else:
+        messages = [{"role": "system", "content": DEFAULT_SYSTEM_PROMPT}]
     total_cost = 0.0
     from .cost import estimate_cost
 
@@ -193,15 +125,22 @@ def main():
             print(f"Tokens (estimated input): {input_tokens_estimate}")
 
             if provider == "openai":
-                assistant_text, prompt_tokens, completion_tokens = call_openai(client, model, messages)
+                assistant_text, prompt_tokens, completion_tokens = create_chat_completion(
+                    messages,
+                    model=P1_MODEL,
+                    temperature=P1_TEMPERATURE,
+                    max_tokens=P1_MAX_TOKENS
+                )
             else:
                 assistant_text, prompt_tokens, completion_tokens = call_gemini(client, model, messages)
 
             print(format_message('assistant', assistant_text))
 
-            turn_cost = estimate_cost(model, prompt_tokens, completion_tokens)
+            safe_prompt_tokens = prompt_tokens if prompt_tokens is not None else 0
+            safe_completion_tokens = completion_tokens if completion_tokens is not None else 0
+            turn_cost = estimate_cost(model, safe_prompt_tokens, safe_completion_tokens)
             total_cost += turn_cost
-            print(f"[usage] prompt_tokens={prompt_tokens} completion_tokens={completion_tokens}")
+            print(f"[usage] prompt_tokens={safe_prompt_tokens} completion_tokens={safe_completion_tokens}")
             print(f"[cost]  turn_usd={turn_cost:.6f} total_usd={total_cost:.6f}")
 
 

@@ -1,12 +1,27 @@
 # ai-engineer-project-1-llm-chatbot
 
-## Project
+## Overview
 
-This project is an LLM-powered chatbot designed to demonstrate core AI engineering skills. By Day 7, it will feature interactive conversations, well made prompts, and basic integrations with external APIs to perform even more tasks. The chatbot will be modular, extensible, scalable and serve as a foundation for more advanced AI-driven applications.
+This project is a modular, production-ready LLM-powered chatbot built for AI engineering learning and demonstration. It supports both OpenAI and Gemini models, robust error handling, configuration via environment variables, and cost estimation. The code is organized for clarity, extensibility, and reliability.
 
-## Provider
+**What I learned:**
 
-Currently using: OpenAI and Gemini (default Gemini model: gemini-2.5-flash)
+- How to structure AI projects for maintainability
+- Implementing robust error handling and retry logic
+- Managing configuration and secrets securely
+- Token counting and cost estimation for LLM APIs
+- Writing clear documentation for reproducibility
+
+## Features
+
+- Interactive CLI chatbot with conversation history
+- Supports OpenAI and Gemini (Google) models
+- Modular codebase with separation of concerns
+- Robust error handling (auth, rate limits, network)
+- Automatic retries with exponential backoff
+- Token counting and cost estimation
+- Configuration via environment variables
+- Easy setup and usage
 
 ## Setup
 
@@ -23,52 +38,70 @@ Currently using: OpenAI and Gemini (default Gemini model: gemini-2.5-flash)
    ```bash
    cp .env.example .env
    ```
-4. Set your API keys in `.env`:
+4. Set your API keys and configuration in `.env`:
    ```env
    OPENAI_API_KEY=your_openai_api_key_here
    GEMINI_API_KEY=your_gemini_api_key_here
-   GEMINI_MODEL=gemini-2.5-flash
+   GEMINI_MODEL=gemini-2.5-flash-lite
+   P1_MODEL=gpt-4o-mini
+   P1_TEMPERATURE=0.1
+   P1_MAX_TOKENS=500
    ```
 
 **Do not commit your `.env` file to version control.**
 
-## Running Day 1
+## Usage
 
-To run the Day 1 script:
-
-```bash
-source .venv/bin/activate
-python -m src.day_01.day_01_hello_world
-```
-
-This will print a one-sentence answer from the LLM to stdout.
-
-## Running Day 2
-
-To run the interactive chatbot CLI:
+To run the chatbot CLI:
 
 ```bash
 source .venv/bin/activate
 python -m src.p1_chatbot.cli
 ```
 
-This will start an interactive chat session with conversation history. Type `quit`, `exit`, or `/quit` to end the conversation.
+Type `quit`, `exit`, or `/quit` to end the conversation.
+
+## Configuration
+
+The chatbot is configured via environment variables (see `.env`). You can change these at any time without code edits:
+
+- `P1_MODEL`: Model name (default: `gpt-4o-mini`)
+- `P1_TEMPERATURE`: Sampling temperature (default: `0.1`)
+- `P1_MAX_TOKENS`: Max tokens for each response (default: `500`)
+- `OPENAI_API_KEY`: Your OpenAI API key
+- `GEMINI_API_KEY`: Your Gemini API key
+- `GEMINI_MODEL`: Gemini model name (default: `gemini-2.5-flash-lite`)
+
+## Architecture
+
+- `cli.py`: CLI entrypoint, user I/O, orchestration
+- `config.py`: Loads environment variables and defines defaults
+- `llm_client.py`: LLM API wrappers, error handling, retries
+- `tokens.py`: Token counting utilities
+- `cost.py`: Pricing and cost estimation
+- `prompts.py`: System prompt(s)
 
 ## Troubleshooting
 
 - **Missing API key:** Ensure you have copied `.env.example` to `.env` and added your API key.
 - **venv not activated:** Run `source .venv/bin/activate` before installing dependencies or running scripts.
+- **Network or rate limit errors:** The chatbot will retry automatically and print clear error messages.
 
 ## Pricing source
 
 - Model: gpt-4o-mini
-- Price per 1,000 input tokens: $0.0005
-- Price per 1,000 output tokens: $0.0015
-- Date recorded: 2026-01-09
-- Source: https://openai.com/pricing
+
+  - Price per 1,000 input tokens: $0.0005
+  - Price per 1,000 output tokens: $0.0015
+  - Date recorded: 2026-01-09
+  - Source: https://openai.com/pricing
 
 - Model: gemini-2.5-flash-lite
-- Price per 1,000 input tokens: $0.00025
-- Price per 1,000 output tokens: $0.0005
-- Date recorded: 2026-01-09
-- Source: https://cloud.google.com/vertex-ai/generative-ai/pricing
+  - Price per 1,000 input tokens: $0.00025
+  - Price per 1,000 output tokens: $0.0005
+  - Date recorded: 2026-01-09
+  - Source: https://cloud.google.com/vertex-ai/generative-ai/pricing
+
+---
+
+**Clone, install, set .env, and run the chatbot using only this README.**
